@@ -1,0 +1,10 @@
+{
+    "C_Cpp.default.configurationProvider": "ms-vscode.cpptools",
+    "files.associations": {
+        "*.h": "c",
+        "*.c": "c"
+    },
+    "cortex-debug.armToolchainPath": "/usr/bin",
+    "cortex-debug.openocdPath": "/usr/bin/openocd",
+    "terminal.integrated.defaultProfile.windows": "Ubuntu (WSL)"
+}

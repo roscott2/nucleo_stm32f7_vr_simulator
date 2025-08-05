@@ -1,0 +1,50 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug STM32F7",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/nucleo_stm32f7_vr_simulator.elf",
+            "request": "launch",
+            "type": "cortex-debug",
+            "runToEntryPoint": "main",
+            "servertype": "openocd",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32f7x.cfg"
+            ],
+            "searchDir": [
+                "/usr/share/openocd/scripts"
+            ],
+            "openOCDLaunchCommands": [
+                "monitor reset halt",
+                "monitor flash write_image erase ${workspaceFolder}/build/nucleo_stm32f7_vr_simulator.hex",
+                "monitor reset halt"
+            ],
+            "svdFile": "${workspaceFolder}/STM32F767.svd",
+            "preLaunchTask": "Build",
+            "showDevDebugOutput": "parsed",
+            "device": "STM32F767ZI",
+            "interface": "swd"
+        },
+        {
+            "name": "Attach STM32F7",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/nucleo_stm32f7_vr_simulator.elf",
+            "request": "attach",
+            "type": "cortex-debug",
+            "servertype": "openocd",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32f7x.cfg"
+            ],
+            "searchDir": [
+                "/usr/share/openocd/scripts"
+            ],
+            "svdFile": "${workspaceFolder}/STM32F767.svd",
+            "showDevDebugOutput": "parsed",
+            "device": "STM32F767ZI",
+            "interface": "swd"
+        }
+    ]
+}
