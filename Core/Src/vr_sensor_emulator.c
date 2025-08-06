@@ -54,7 +54,7 @@ extern TIM_HandleTypeDef htim6;
 /* USER CODE BEGIN PFP */
 static void VR_Emulator_UpdateTimerPeriod(void);
 static float VR_Emulator_CalculateToothAngle(uint8_t tooth_index, float position_in_tooth);
-static uint16_t VR_Emulator_ApplyDistortion(float base_sine, float angle);
+static float VR_Emulator_ApplyDistortion(float base_sine, float angle);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -270,7 +270,7 @@ static float VR_Emulator_CalculateToothAngle(uint8_t tooth_index, float position
   * @param  angle: Current angle in radians
   * @retval Distorted sine wave value
   */
-static uint16_t VR_Emulator_ApplyDistortion(float base_sine, float angle)
+static float VR_Emulator_ApplyDistortion(float base_sine, float angle)
 {
     // Add harmonic distortion to make signal more realistic
     float harmonic2 = sinf(2.0f * angle) * VR_DISTORTION_FACTOR;
