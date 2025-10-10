@@ -24,6 +24,7 @@ extern "C" {
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "test_vr_emulator.h"
+#include "test_map_emulator.h"
 #include <stdbool.h>
 
 /* Exported types ------------------------------------------------------------*/
@@ -115,6 +116,26 @@ bool VR_Test_ValidateADCValue(uint16_t adc_value);
   * @retval Test results
   */
 TestResults_t VR_Test_RunAutomated(void);
+
+/* MAP sensor test functions */
+
+/**
+  * @brief  Run MAP sensor basic functionality test
+  * @retval Test results
+  */
+TestResults_t MAP_Test_RunBasic(void);
+
+/**
+  * @brief  Run coordinated VR + MAP sensor tests
+  * @retval Test results
+  */
+TestResults_t VR_MAP_Test_RunCoordinated(void);
+
+/**
+  * @brief  Run dual sensor demo showing both outputs
+  * @retval None
+  */
+void VR_MAP_Test_RunDemo(void);
 
 /* Test utility functions for main application */
 

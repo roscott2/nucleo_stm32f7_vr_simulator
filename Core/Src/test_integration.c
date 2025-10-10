@@ -16,7 +16,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include "test_integration.h"
 #include "test_vr_emulator.h"
+#include "test_map_emulator.h"
 #include "vr_sensor_emulator.h"
+#include "map_sensor_emulator.h"
 #include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
@@ -65,10 +67,11 @@ void VR_Test_Init(void)
     
     printf("\n");
     printf("======================================\n");
-    printf("  VR Sensor Emulator Test Suite\n");
+    printf("  Dual Sensor Emulator Test Suite\n");
     printf("======================================\n");
     printf("Target: NUCLEO-STM32F7\n");
-    printf("RPM Range: 0 - %d RPM\n", MAX_RPM);
+    printf("VR Sensor RPM Range: 0 - %d RPM\n", MAX_RPM);
+    printf("MAP Sensor Pressure: %.1f - %.1f kPa\n", MAP_IDLE_VACUUM_KPA, MAP_ATMOSPHERIC_PRESSURE_KPA);
     printf("Test Mode: ENABLED\n");
     printf("======================================\n\n");
 }
@@ -152,6 +155,24 @@ TestResults_t VR_Test_RunComprehensive(void)
     // Test Suite 5: Performance Testing
     printf("\n=== Test Suite 5: Performance Testing ===\n");
     suite_results = VR_Emulator_TestPerformance(5000);
+    overall_results.total_tests += suite_results.total_tests;
+    overall_results.passed_tests += suite_results.passed_tests;
+    overall_results.failed_tests += suite_results.failed_tests;
+    
+    HAL_Delay(TEST_DELAY_MS);
+    
+    // Test Suite 6: MAP Sensor Testing
+    printf("\n=== Test Suite 6: MAP Sensor Testing ===\n");
+    suite_results = MAP_Emulator_RunTests();
+    overall_results.total_tests += suite_results.total_tests;
+    overall_results.passed_tests += suite_results.passed_tests;
+    overall_results.failed_tests += suite_results.failed_tests;
+    
+    HAL_Delay(TEST_DELAY_MS);
+    
+    // Test Suite 7: MAP Pressure Sweep
+    printf("\n=== Test Suite 7: MAP Pressure Sweep ===\n");
+    suite_results = MAP_Emulator_TestPressureSweep();
     overall_results.total_tests += suite_results.total_tests;
     overall_results.passed_tests += suite_results.passed_tests;
     overall_results.failed_tests += suite_results.failed_tests;
@@ -317,6 +338,186 @@ void VR_Test_RunDemo(void)
     }
     
     printf("Demo completed.\n");
+}
+
+/**
+  * @brief  Run MAP sensor basic functionality test
+  * @retval Test results
+  */
+TestResults_t MAP_Test_RunBasic(void)
+{
+    TestResults_t results = {0};
+    
+    if (!test_mode_enabled) {
+        printf("Error: Test mode not initialized. Call VR_Test_Init() first.\n");
+        return results;
+    }
+    
+    Print_Test_Header();
+    printf("Running MAP SENSOR BASIC test suite...\n\n");
+    
+    // Run MAP basic tests
+    results = MAP_Emulator_RunTests();
+    
+    Print_Test_Footer(&results);
+    return results;
+}
+
+/**
+  * @brief  Run coordinated VR + MAP sensor tests
+  * @retval Test results
+  */
+TestResults_t VR_MAP_Test_RunCoordinated(void)
+{
+    TestResults_t overall_results = {0};
+    TestResults_t suite_results = {0};
+    
+    if (!test_mode_enabled) {
+        printf("Error: Test mode not initialized. Call VR_Test_Init() first.\n");
+        return overall_results;
+    }
+    
+    printf("\n=== COORDINATED VR + MAP SENSOR TESTS ===\n");
+    printf("Testing both sensors with shared TPS input\n\n");
+    
+    // Test coordinated operation across TPS range
+    printf("--- Coordinated TPS Response Test ---\n");
+    uint16_t test_adc_values[] = {0, 500, 1000, 2000, 3000, 4000, 4095};
+    int num_values = sizeof(test_adc_values) / sizeof(test_adc_values[0]);
+    
+    for (int i = 0; i < num_values; i++) {
+        uint16_t adc_value = test_adc_values[i];
+        float tps_percent = (float)adc_value * 100.0f / 4095.0f;
+        uint16_t expected_rpm = (uint32_t)adc_value * MAX_RPM / 4095;
+        
+        printf("\nTesting ADC: %u (TPS: %.1f%%, Expected RPM: %u)\n", 
+               adc_value, tps_percent, expected_rpm);
+        
+        // Update both sensors with same ADC value
+        VR_Emulator_SetRPM(expected_rpm);
+        MAP_Emulator_UpdateFromTPS(adc_value);
+        MAP_Emulator_Update();
+        
+        HAL_Delay(100);  // Allow sensors to settle
+        
+        // Read VR sensor results
+        uint16_t vr_rpm = VR_Emulator_GetRPM();
+        
+        // Read MAP sensor results  
+        float map_tps = MAP_Emulator_GetTPS_Percent();
+        float map_pressure = MAP_Emulator_GetPressure_kPa();
+        float map_voltage = MAP_Emulator_GetVoltage();
+        
+        printf("  VR RPM: %u\n", vr_rpm);
+        printf("  MAP TPS: %.1f%%\n", map_tps);
+        printf("  MAP Pressure: %.1f kPa\n", map_pressure);
+        printf("  MAP Voltage: %.2f V\n", map_voltage);
+        printf("  MAP Condition: %s\n", MAP_Emulator_GetPressureDescription());
+        
+        // Validate coordination
+        if (abs((int)vr_rpm - (int)expected_rpm) <= 50) {
+            printf("  ✓ VR RPM matches expected\n");
+            overall_results.passed_tests++;
+        } else {
+            printf("  ✗ VR RPM mismatch\n");
+            overall_results.failed_tests++;
+        }
+        overall_results.total_tests++;
+        
+        if (fabsf(map_tps - tps_percent) <= 2.0f) {
+            printf("  ✓ MAP TPS matches expected\n");
+            overall_results.passed_tests++;
+        } else {
+            printf("  ✗ MAP TPS mismatch\n");
+            overall_results.failed_tests++;
+        }
+        overall_results.total_tests++;
+        
+        // Validate pressure makes sense for TPS position
+        if (tps_percent < 10.0f) {
+            // Low TPS should have high vacuum (low pressure)
+            if (map_pressure < (MAP_IDLE_VACUUM_KPA + 10.0f)) {
+                printf("  ✓ Low TPS gives high vacuum\n");
+                overall_results.passed_tests++;
+            } else {
+                printf("  ✗ Low TPS pressure incorrect\n");
+                overall_results.failed_tests++;
+            }
+        } else if (tps_percent > 90.0f) {
+            // High TPS should have low vacuum (high pressure)
+            if (map_pressure > (MAP_ATMOSPHERIC_PRESSURE_KPA - 10.0f)) {
+                printf("  ✓ High TPS gives low vacuum\n");
+                overall_results.passed_tests++;
+            } else {
+                printf("  ✗ High TPS pressure incorrect\n");
+                overall_results.failed_tests++;
+            }
+        }
+        overall_results.total_tests++;
+    }
+    
+    printf("\n=== COORDINATED TEST SUMMARY ===\n");
+    printf("Total Tests: %d\n", overall_results.total_tests);
+    printf("Passed: %d\n", overall_results.passed_tests);
+    printf("Failed: %d\n", overall_results.failed_tests);
+    printf("Success Rate: %.1f%%\n", 
+           (float)overall_results.passed_tests * 100.0f / overall_results.total_tests);
+    
+    return overall_results;
+}
+
+/**
+  * @brief  Run dual sensor demo showing both outputs
+  * @retval None
+  */
+void VR_MAP_Test_RunDemo(void)
+{
+    printf("\n=== DUAL SENSOR DEMO ===\n");
+    printf("Demonstrating VR and MAP sensors with coordinated TPS input\n");
+    printf("Press any key to stop demo...\n\n");
+    
+    uint16_t demo_rpms[] = {0, 800, 2000, 4000, 6000, 8000, 10000, 12000, 13400};
+    int num_rpms = sizeof(demo_rpms) / sizeof(demo_rpms[0]);
+    
+    for (int i = 0; i < num_rpms; i++) {
+        uint16_t rpm = demo_rpms[i];
+        uint16_t adc_value = (uint32_t)rpm * 4095 / MAX_RPM;
+        float tps_percent = (float)adc_value * 100.0f / 4095.0f;
+        
+        printf("--- Demo Point %d: RPM %u (TPS %.1f%%) ---\n", i+1, rpm, tps_percent);
+        
+        // Set VR sensor
+        VR_Emulator_SetRPM(rpm);
+        
+        // Set MAP sensor with corresponding TPS
+        MAP_Emulator_UpdateFromTPS(adc_value);
+        MAP_Emulator_Update();
+        
+        HAL_Delay(100);  // Allow settling
+        
+        // Display VR characteristics
+        float tooth_freq = VR_Test_CalculateToothFrequency(rpm);
+        uint32_t tooth_period = VR_Test_CalculateToothPeriod(rpm);
+        
+        printf("VR Sensor:\n");
+        printf("  RPM: %u\n", VR_Emulator_GetRPM());
+        printf("  Tooth frequency: %.2f Hz\n", tooth_freq);
+        printf("  Tooth period: %lu us\n", tooth_period);
+        
+        // Display MAP characteristics
+        printf("MAP Sensor:\n");
+        printf("  TPS: %.1f%%\n", MAP_Emulator_GetTPS_Percent());
+        printf("  Pressure: %.1f kPa (%.1f PSI)\n", 
+               MAP_Emulator_GetPressure_kPa(), MAP_Emulator_GetPressure_PSI());
+        printf("  Voltage: %.2f V\n", MAP_Emulator_GetVoltage());
+        printf("  DAC: %u\n", MAP_Emulator_GetDACOutput());
+        printf("  Condition: %s\n", MAP_Emulator_GetPressureDescription());
+        
+        printf("\n");
+        HAL_Delay(2000);  // Demo pause
+    }
+    
+    printf("Dual sensor demo completed.\n");
 }
 
 /* USER CODE END 0 */

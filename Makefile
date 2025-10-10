@@ -38,7 +38,9 @@ BUILD_DIR = build
 C_SOURCES =  \
 Core/Src/main.c \
 Core/Src/vr_sensor_emulator.c \
+Core/Src/map_sensor_emulator.c \
 Core/Src/test_vr_emulator.c \
+Core/Src/test_map_emulator.c \
 Core/Src/test_integration.c \
 Core/Src/stm32f7xx_it.c \
 Core/Src/stm32f7xx_hal_msp.c \

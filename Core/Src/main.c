@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "vr_sensor_emulator.h"
+#include "map_sensor_emulator.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -110,14 +111,22 @@ int main(void)
   // Initialize VR sensor emulator
   VR_Emulator_Init();
   
+  // Initialize MAP sensor emulator
+  MAP_Emulator_Init();
+  
   // Start ADC calibration
   if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
   {
     Error_Handler();
   }
   
-  // Start DAC
+  // Start DAC channels
   if (HAL_DAC_Start(&hdac, DAC_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  
+  if (HAL_DAC_Start(&hdac, DAC_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -143,8 +152,15 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     
-    // Update VR sensor emulator (read potentiometer, update RPM)
+    // Update VR sensor emulator (reads potentiometer internally)
     VR_Emulator_Update();
+    
+    // Read the same potentiometer for MAP sensor using VR emulator's reading
+    uint16_t tps_adc_value = VR_Emulator_ReadPotentiometer();
+    MAP_Emulator_UpdateFromTPS(tps_adc_value);
+    
+    // Update MAP sensor emulator
+    MAP_Emulator_Update();
     
     // Small delay to prevent overwhelming the system
     HAL_Delay(10);
@@ -268,11 +284,20 @@ static void MX_DAC_Init(void)
     Error_Handler();
   }
 
-  /** DAC channel OUT1 config
+  /** DAC channel OUT1 config (PA4 - VR Sensor)
   */
   sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
   sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
   if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** DAC channel OUT2 config (PA5 - MAP Sensor)
+  */
+  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
+  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+  if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
