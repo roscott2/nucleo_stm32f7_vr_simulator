@@ -131,13 +131,13 @@ int main(void)
     Error_Handler();
   }
   
-  // Start timers
-  if (HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
+  // Start timers with interrupts
+  if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK)    // TIM2: RPM updates (50ms)
   {
     Error_Handler();
   }
   
-  if (HAL_TIM_Base_Start(&htim2) != HAL_OK)
+  if (HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)    // TIM6: VR waveform (variable)
   {
     Error_Handler();
   }
@@ -152,20 +152,12 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     
-    // Update VR sensor emulator (reads potentiometer internally)
-    VR_Emulator_Update();
+    // Main loop now handles only non-time-critical tasks
+    // RPM and MAP updates are handled by TIM2 (50ms)
+    // VR waveform generation handled by TIM6 (variable frequency)
     
-    // Read the same potentiometer for MAP sensor using VR emulator's reading
-    uint16_t tps_adc_value = VR_Emulator_ReadPotentiometer();
-    MAP_Emulator_UpdateFromTPS(tps_adc_value);
-    
-    // Update MAP sensor emulator
-    MAP_Emulator_Update();
-    
-    // Small delay to prevent overwhelming the system
-    HAL_Delay(10);
-    
-    // Toggle LED to show system is alive
+    // Toggle LED to show system is alive (slower rate)
+    HAL_Delay(500);  // 500ms delay for visual indication
     HAL_GPIO_TogglePin(LD1_GPIO_Port, LD1_Pin);
   }
   /* USER CODE END 3 */
@@ -173,6 +165,12 @@ int main(void)
 
 /**
   * @brief System Clock Configuration
+  * @note  Clock configuration for 108 MHz SYSCLK from 8 MHz HSE:
+  *        - HSE: 8 MHz (from ST-LINK MCO)
+  *        - PLL: 8MHz ÷ 4 × 216 ÷ 4 = 108 MHz
+  *        - HCLK: 108 MHz (AHB)
+  *        - APB1: 54 MHz (Timers: 108 MHz)
+  *        - APB2: 108 MHz (Timers: 108 MHz)
   * @retval None
   */
 void SystemClock_Config(void)
@@ -192,15 +190,15 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 4;
   RCC_OscInitStruct.PLL.PLLN = 216;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 9;
+  RCC_OscInitStruct.PLL.PLLR = 2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -308,15 +306,22 @@ static void MX_DAC_Init(void)
   * @param None
   * @retval None
   */
+/**
+  * @brief TIM2 Initialization Function - RPM Update Timer (50ms intervals)
+  * @note  TIM2 Clock: 108 MHz, PSC=10799, ARR=499 → 50ms period
+  *        Frequency = 108MHz / ((10799+1) * (499+1)) = 20 Hz (50ms)
+  * @param None
+  * @retval None
+  */
 static void MX_TIM2_Init(void)
 {
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 107;
+  htim2.Init.Prescaler = 10799;                    // For 50ms timing
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 999;
+  htim2.Init.Period = 499;                         // ARR = 499 for 50ms
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -337,7 +342,11 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief TIM6 Initialization Function
+  * @brief TIM6 Initialization Function - VR Waveform Generation Timer
+  * @note  TIM6 generates interrupts for each degree of timing wheel rotation
+  *        Frequency = RPM/60 * 360 Hz (1 interrupt per degree)
+  *        PSC varies with RPM, ARR fixed at 9 (ARR+1 = 10)
+  *        Initial setup for 500 RPM: PSC = 5399, ARR = 9
   * @param None
   * @retval None
   */
@@ -346,9 +355,9 @@ static void MX_TIM6_Init(void)
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 1079;
+  htim6.Init.Prescaler = 5399;                     // Initial PSC for 500 RPM
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 999;
+  htim6.Init.Period = 9;                           // ARR = 9 (ARR+1 = 10)
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
@@ -423,17 +432,25 @@ static void MX_GPIO_Init(void)
 
 /**
   * @brief  Period elapsed callback in non blocking mode
-  * @note   This function is called  when TIM6 interrupt took place, inside
-  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
-  * a global variable "uwTick" used as application time base.
+  * @note   Handles both TIM2 (RPM updates) and TIM6 (VR waveform generation)
   * @param  htim : TIM handle
   * @retval None
   */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  if (htim->Instance == TIM6) {
-    HAL_IncTick();
-    // Call VR emulator timer callback for precise timing
+  if (htim->Instance == TIM2) {
+    // TIM2: RPM and MAP sensor updates (50ms intervals)
+    
+    // Update VR sensor RPM reading
+    VR_Emulator_Update();
+    
+    // Update MAP sensor with TPS reading
+    uint16_t tps_adc_value = VR_Emulator_ReadPotentiometer();
+    MAP_Emulator_UpdateFromTPS(tps_adc_value);
+    MAP_Emulator_Update();
+    
+  } else if (htim->Instance == TIM6) {
+    // TIM6: VR waveform generation (1 interrupt per degree)
     VR_Emulator_TimerCallback();
   }
 }

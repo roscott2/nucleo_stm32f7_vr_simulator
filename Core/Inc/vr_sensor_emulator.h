@@ -35,6 +35,9 @@ typedef struct {
     uint32_t tooth_timer;
     float sine_phase;
     uint16_t dac_output;
+    float current_degree;        // Current timing wheel position in degrees
+    uint16_t tim6_prescaler;     // Current TIM6 prescaler value
+    uint16_t quantized_rpm;      // RPM quantized to 500 intervals
 } VR_SensorState_t;
 
 /* Exported constants --------------------------------------------------------*/
@@ -74,8 +77,13 @@ uint16_t VR_Emulator_ReadPotentiometer(void);
 void VR_Emulator_GenerateSignal(void);
 uint16_t VR_Emulator_CalculateDAC_Value(float angle, uint8_t tooth_active);
 
-/* Timer callback for tooth generation */
-void VR_Emulator_TimerCallback(void);
+/* Timer callbacks */
+void VR_Emulator_TimerCallback(void);                    // TIM6: Waveform generation
+
+/* New functions for TIM6 frequency control */
+void VR_Emulator_UpdateTIM6Frequency(uint16_t rpm);     // Update TIM6 for current RPM
+uint16_t VR_Emulator_CalculatePrescaler(uint16_t rpm);  // Calculate PSC for given RPM
+void VR_Emulator_GenerateWaveformDegree(void);          // Generate waveform for 1 degree
 
 #ifdef __cplusplus
 }
