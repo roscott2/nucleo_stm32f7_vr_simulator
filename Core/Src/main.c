@@ -342,11 +342,11 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief TIM6 Initialization Function - VR Waveform Generation Timer
-  * @note  TIM6 generates interrupts for each degree of timing wheel rotation
-  *        Frequency = RPM/60 * 360 Hz (1 interrupt per degree)
-  *        PSC varies with RPM, ARR fixed at 9 (ARR+1 = 10)
-  *        Initial setup for 500 RPM: PSC = 5399, ARR = 9
+  * @brief TIM6 Initialization Function - VR Waveform Generation Timer (Fixed 100kHz)
+  * @note  TIM6 generates interrupts at fixed 100kHz for high-resolution waveform generation
+  *        TIM6 Clock: 108 MHz, PSC=1079, ARR=0 → 100kHz frequency
+  *        Frequency = 108MHz / ((1079+1) * (0+1)) = 100 kHz (10μs period)
+  *        This provides excellent resolution at low RPM, adequate at high RPM
   * @param None
   * @retval None
   */
@@ -355,9 +355,9 @@ static void MX_TIM6_Init(void)
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 5399;                     // Initial PSC for 500 RPM
+  htim6.Init.Prescaler = 1079;                     // PSC for 100kHz: (108MHz/100kHz) - 1 = 1079
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 9;                           // ARR = 9 (ARR+1 = 10)
+  htim6.Init.Period = 0;                           // ARR = 0 (ARR+1 = 1)
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {

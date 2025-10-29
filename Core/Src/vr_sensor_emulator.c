@@ -93,6 +93,11 @@ void VR_Emulator_Update(void)
   * @param  rpm: Target RPM (0 to MAX_RPM)
   * @retval None
   */
+/**
+  * @brief  Set target RPM
+  * @param  rpm: Target RPM (0 to MAX_RPM)
+  * @retval None
+  */
 void VR_Emulator_SetRPM(uint16_t rpm)
 {
     if (rpm > MAX_RPM) {
@@ -102,18 +107,23 @@ void VR_Emulator_SetRPM(uint16_t rpm)
     vr_state.target_rpm = rpm;
     
     if (rpm > 0) {
-        // Quantize RPM to 500 intervals for stable timing
-        vr_state.quantized_rpm = (rpm / 500) * 500;
-        if (vr_state.quantized_rpm == 0) vr_state.quantized_rpm = 500; // Minimum 500 RPM for quantization
+        // Calculate timing periods based on RPM
+        vr_state.revolution_period_us = (60000000UL / rpm); // Revolution period in microseconds
+        vr_state.tooth_period_us = vr_state.revolution_period_us / TRIGGER_WHEEL_TEETH; // Period per tooth
         
-        // Update TIM6 frequency for degree-based generation
-        VR_Emulator_UpdateTIM6Frequency();
+        // Start TIM6 at fixed 100kHz if not already running
+        if (HAL_TIM_Base_GetState(&htim6) != HAL_TIM_STATE_BUSY) {
+            HAL_TIM_Base_Start_IT(&htim6);
+        }
     } else {
-        vr_state.quantized_rpm = 0;
-        vr_state.current_degree = 0;
+        vr_state.revolution_period_us = 0;
+        vr_state.tooth_period_us = 0;
+        vr_state.revolution_timer_us = 0;
+        vr_state.tooth_timer_us = 0;
+        vr_state.current_tooth = 0;
         
         // Set DAC to DC offset when stopped
-        vr_state.dac_output = (uint16_t)(DAC_RESOLUTION * VR_DC_OFFSET);
+        vr_state.dac_output = (uint16_t)(DAC_RESOLUTION * 0.5f); // 50% for 1.65V DC offset
         HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, vr_state.dac_output);
         
         // Stop TIM6
@@ -148,7 +158,7 @@ uint16_t VR_Emulator_ReadPotentiometer(void)
 }
 
 /**
-  * @brief  Timer callback for VR sensor generation (called for each degree)
+  * @brief  Timer callback for VR sensor generation (called at fixed 100kHz rate)
   * @retval None
   */
 void VR_Emulator_TimerCallback(void)
@@ -157,137 +167,121 @@ void VR_Emulator_TimerCallback(void)
         return; // No output when stopped
     }
     
-    // Generate waveform for current degree
-    VR_Emulator_GenerateWaveformDegree();
+    // Generate waveform at fixed 100kHz rate
+    VR_Emulator_GenerateWaveformFixed();
     
-    // Increment degree counter
-    vr_state.current_degree++;
-    if (vr_state.current_degree >= 360) {
-        vr_state.current_degree = 0;
+    // Increment time counters (10μs per interrupt at 100kHz)
+    vr_state.revolution_timer_us += 10;
+    vr_state.tooth_timer_us += 10;
+    
+    // Check if tooth period is complete
+    if (vr_state.tooth_timer_us >= vr_state.tooth_period_us) {
+        vr_state.tooth_timer_us = 0;
+        vr_state.current_tooth = (vr_state.current_tooth + 1) % TRIGGER_WHEEL_TEETH;
+    }
+    
+    // Check if full revolution is complete  
+    if (vr_state.revolution_timer_us >= vr_state.revolution_period_us) {
+        vr_state.revolution_timer_us = 0;
+        vr_state.current_tooth = 0; // Reset to first tooth
+        vr_state.tooth_timer_us = 0;
     }
 }
 
 /**
-  * @brief  Update TIM6 frequency for quantized RPM
+  * @brief  Generate waveform at fixed 100kHz rate
   * @retval None
   */
-void VR_Emulator_UpdateTIM6Frequency(void)
+void VR_Emulator_GenerateWaveformFixed(void)
 {
-    if (vr_state.quantized_rpm == 0) {
-        HAL_TIM_Base_Stop_IT(&htim6);
+    if (vr_state.tooth_period_us == 0) {
+        // No RPM set, output DC offset
+        vr_state.dac_output = (uint16_t)(DAC_RESOLUTION * 0.5f);
+        HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, vr_state.dac_output);
         return;
     }
     
-    // Calculate required frequency: RPM/60 * 360 (for 1 interrupt per degree)
-    float required_freq = (float)vr_state.quantized_rpm * 6.0f; // RPM/60 * 360 = RPM * 6
+    // Determine tooth timing characteristics
+    uint32_t tooth_active_us, tooth_gap_us;
     
-    // Calculate prescaler for this frequency
-    uint16_t new_prescaler = VR_Emulator_CalculatePrescaler(required_freq);
-    
-    if (new_prescaler != vr_state.tim6_prescaler) {
-        vr_state.tim6_prescaler = new_prescaler;
-        
-        // Stop timer, update prescaler, restart
-        HAL_TIM_Base_Stop_IT(&htim6);
-        __HAL_TIM_SET_PRESCALER(&htim6, new_prescaler);
-        HAL_TIM_Base_Start_IT(&htim6);
-    } else if (!__HAL_TIM_GET_FLAG(&htim6, TIM_FLAG_UPDATE)) {
-        // Timer not running, start it
-        HAL_TIM_Base_Start_IT(&htim6);
-    }
-}
-
-/**
-  * @brief  Calculate prescaler for desired frequency
-  * @param  frequency: Desired frequency in Hz
-  * @retval Prescaler value
-  */
-uint16_t VR_Emulator_CalculatePrescaler(float frequency)
-{
-    // TIM6 clock = APB1 timer clock = 108MHz
-    // Formula: frequency = timer_clock / ((prescaler + 1) * (ARR + 1))
-    // With ARR = 9 (fixed), solve for prescaler
-    
-    const uint32_t timer_clock = 108000000; // 108MHz
-    const uint32_t arr_value = 9;            // Fixed ARR for consistent timing
-    
-    if (frequency <= 0) {
-        return 65535; // Maximum prescaler for very low frequencies
-    }
-    
-    uint32_t prescaler = (timer_clock / (frequency * (arr_value + 1))) - 1;
-    
-    // Clamp to valid range
-    if (prescaler > 65535) prescaler = 65535;
-    if (prescaler < 1) prescaler = 1;
-    
-    return (uint16_t)prescaler;
-}
-
-/**
-  * @brief  Generate waveform for current degree
-  * @retval None
-  */
-void VR_Emulator_GenerateWaveformDegree(void)
-{
-    // Determine which tooth we're in based on current degree
-    uint16_t tooth_number = vr_state.current_degree / 20; // 18 teeth * 20 degrees each
-    uint16_t degree_in_tooth = vr_state.current_degree % 20;
-    
-    // Handle the case where we have 18 teeth (0-17)
-    if (tooth_number >= TRIGGER_WHEEL_TEETH) {
-        tooth_number = TRIGGER_WHEEL_TEETH - 1;
-        degree_in_tooth = 19; // Last degree of last tooth
-    }
-    
-    uint8_t is_tooth_active = 0;
-    
-    if (tooth_number == MISSING_TOOTH_INDEX) {
-        // Missing tooth: 12° tooth, 8° gap
-        is_tooth_active = (degree_in_tooth < 12) ? 1 : 0;
+    if (vr_state.current_tooth == MISSING_TOOTH_INDEX) {
+        // Missing tooth: 12° tooth, 8° gap out of 20° total
+        tooth_active_us = (vr_state.tooth_period_us * 12) / 20;   // 12/20 = 60%
+        tooth_gap_us = (vr_state.tooth_period_us * 8) / 20;       // 8/20 = 40%  
     } else {
-        // Regular tooth: 4° tooth, 16° gap
-        is_tooth_active = (degree_in_tooth < 4) ? 1 : 0;
+        // Regular tooth: 4° tooth, 16° gap out of 20° total
+        tooth_active_us = (vr_state.tooth_period_us * 4) / 20;    // 4/20 = 20%
+        tooth_gap_us = (vr_state.tooth_period_us * 16) / 20;      // 16/20 = 80%
     }
     
-    // Calculate angle in radians for sine generation
-    float angle_rad = DEGREES_TO_RADIANS((float)vr_state.current_degree);
+    uint8_t is_tooth_active = (vr_state.tooth_timer_us < tooth_active_us) ? 1 : 0;
     
-    // Generate DAC output
-    vr_state.dac_output = VR_Emulator_CalculateDAC_Value(angle_rad, is_tooth_active);
+    // Calculate DAC output based on position within tooth or gap
+    if (is_tooth_active) {
+        // In tooth active period - generate rising sine
+        float progress = (float)vr_state.tooth_timer_us / (float)tooth_active_us;
+        vr_state.dac_output = VR_Emulator_CalculateDAC_Value_Fixed(progress, 1);
+    } else {
+        // In gap period - generate falling sine
+        uint32_t gap_time = vr_state.tooth_timer_us - tooth_active_us;
+        float progress = (float)gap_time / (float)tooth_gap_us;
+        vr_state.dac_output = VR_Emulator_CalculateDAC_Value_Fixed(progress, 0);
+    }
     
     // Output to DAC
     HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, vr_state.dac_output);
 }
 
 /**
-  * @brief  Calculate DAC output value for given angle and tooth state
-  * @param  angle: Current angle in radians
-  * @param  tooth_active: 1 if tooth is active, 0 if in gap
+  * @brief  Calculate DAC output value for fixed-rate generation
+  * @param  progress: Position progress within tooth/gap period (0.0 to 1.0)
+  * @param  tooth_active: 1 for tooth active period, 0 for gap period
   * @retval DAC value (0 to DAC_RESOLUTION-1)
   */
-uint16_t VR_Emulator_CalculateDAC_Value(float angle, uint8_t tooth_active)
+uint16_t VR_Emulator_CalculateDAC_Value_Fixed(float progress, uint8_t tooth_active)
 {
-    float output_voltage = VR_DC_OFFSET; // Start with DC offset
+    float output_voltage = 0.5f; // Start with 50% DC offset (1.65V)
+    
+    // Clamp progress to valid range
+    if (progress < 0.0f) progress = 0.0f;
+    if (progress > 1.0f) progress = 1.0f;
     
     if (tooth_active) {
-        // Generate distorted sine wave for tooth
-        float base_sine = sinf(angle);
+        // Tooth active: Generate sine wave from DC to peak and back
+        // Peak occurs at progress = 0.5 (middle of tooth active period)
+        float sine_angle = progress * M_PI; // 0 to π
+        float sine_value = sinf(sine_angle); // 0 to 1 to 0
         
-        // Apply distortion to make it more realistic
-        float distorted_sine = VR_Emulator_ApplyDistortion(base_sine, angle);
+        // Apply distortion for realism
+        float distorted_sine = VR_Emulator_ApplyDistortion(sine_value, sine_angle);
         
-        // Scale and add to DC offset
-        output_voltage += distorted_sine * VR_AMPLITUDE_SCALE;
+        // Scale to upper half of DAC range (1.65V to 3.3V)
+        output_voltage = 0.5f + (distorted_sine * 0.5f);
+        
+    } else {
+        // Gap period: Generate inverted sine below DC offset
+        // Minimum occurs at progress = 0.5 (middle of gap period)
+        float sine_angle = progress * M_PI; // 0 to π  
+        float sine_value = sinf(sine_angle); // 0 to 1 to 0
+        
+        // Apply distortion
+        float distorted_sine = VR_Emulator_ApplyDistortion(sine_value, sine_angle);
+        
+        // Scale to lower half of DAC range (0V to 1.65V)
+        output_voltage = 0.5f - (distorted_sine * 0.5f);
     }
     
     // Clamp to valid range
     if (output_voltage < 0.0f) output_voltage = 0.0f;
     if (output_voltage > 1.0f) output_voltage = 1.0f;
     
-    // Convert to DAC value
+    // Convert to DAC value (0-4095 for 12-bit DAC)
     return (uint16_t)(output_voltage * DAC_RESOLUTION);
 }
+
+
+
+
 
 /**
   * @brief  Update RPM from potentiometer (called by TIM2 interrupt)
@@ -304,21 +298,28 @@ void VR_Emulator_UpdateRPM(void)
 }
 
 /**
-  * @brief  Apply distortion to base sine wave
-  * @param  base_sine: Base sine wave value (-1.0 to 1.0)
-  * @param  angle: Current angle in radians
+  * @brief  Apply distortion to base sine wave for VR sensor realism
+  * @param  base_sine: Base sine wave value (0.0 to 1.0)
+  * @param  angle: Current angle in radians within tooth
   * @retval Distorted sine wave value
   */
 static float VR_Emulator_ApplyDistortion(float base_sine, float angle)
 {
-    // Add harmonic distortion to make signal more realistic
-    float harmonic2 = sinf(2.0f * angle) * VR_DISTORTION_FACTOR;
-    float harmonic3 = sinf(3.0f * angle) * (VR_DISTORTION_FACTOR * 0.5f);
+    // Add subtle harmonic distortion for VR sensor realism
+    float harmonic2 = sinf(2.0f * angle) * VR_DISTORTION_FACTOR * 0.3f;
+    float harmonic3 = sinf(3.0f * angle) * VR_DISTORTION_FACTOR * 0.1f;
     
-    // Add some asymmetry
-    float asymmetry = (base_sine > 0) ? 0.1f * VR_DISTORTION_FACTOR : -0.05f * VR_DISTORTION_FACTOR;
+    // Add slight asymmetry to simulate real VR sensor characteristics
+    float asymmetry = base_sine * 0.05f * VR_DISTORTION_FACTOR;
     
-    return base_sine + harmonic2 + harmonic3 + asymmetry;
+    // Combine base sine with distortions
+    float distorted = base_sine + harmonic2 + harmonic3 + asymmetry;
+    
+    // Clamp to valid range (0.0 to 1.0)
+    if (distorted < 0.0f) distorted = 0.0f;
+    if (distorted > 1.0f) distorted = 1.0f;
+    
+    return distorted;
 }
 
 /* USER CODE END 0 */

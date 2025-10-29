@@ -30,14 +30,13 @@ extern "C" {
 typedef struct {
     uint16_t rpm_adc_value;
     uint16_t target_rpm;
-    uint32_t tooth_period_us;
+    uint32_t tooth_period_us;         // Period for each tooth in microseconds  
     uint8_t current_tooth;
-    uint32_t tooth_timer;
+    uint32_t tooth_timer_us;          // Current position within tooth period (microseconds)
     float sine_phase;
     uint16_t dac_output;
-    float current_degree;        // Current timing wheel position in degrees
-    uint16_t tim6_prescaler;     // Current TIM6 prescaler value
-    uint16_t quantized_rpm;      // RPM quantized to 500 intervals
+    uint32_t revolution_period_us;    // Total revolution period in microseconds
+    uint32_t revolution_timer_us;     // Current position in revolution (microseconds)
 } VR_SensorState_t;
 
 /* Exported constants --------------------------------------------------------*/
@@ -75,15 +74,14 @@ void VR_Emulator_SetRPM(uint16_t rpm);
 uint16_t VR_Emulator_GetRPM(void);
 uint16_t VR_Emulator_ReadPotentiometer(void);
 void VR_Emulator_GenerateSignal(void);
-uint16_t VR_Emulator_CalculateDAC_Value(float angle, uint8_t tooth_active);
+uint16_t VR_Emulator_CalculateDAC_Value_Fixed(float progress, uint8_t tooth_active);
 
 /* Timer callbacks */
-void VR_Emulator_TimerCallback(void);                    // TIM6: Waveform generation
+void VR_Emulator_TimerCallback(void);                    // TIM6: Fixed 100kHz waveform generation
 
-/* New functions for TIM6 frequency control */
-void VR_Emulator_UpdateTIM6Frequency(uint16_t rpm);     // Update TIM6 for current RPM
-uint16_t VR_Emulator_CalculatePrescaler(uint16_t rpm);  // Calculate PSC for given RPM
-void VR_Emulator_GenerateWaveformDegree(void);          // Generate waveform for 1 degree
+/* Functions for fixed-rate waveform generation */
+void VR_Emulator_UpdateRPM(void);                       // TIM2: Read ADC and update RPM
+void VR_Emulator_GenerateWaveformFixed(void);           // Generate waveform at fixed 100kHz rate
 
 #ifdef __cplusplus
 }
